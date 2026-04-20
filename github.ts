@@ -26,7 +26,7 @@ class Github extends F.Tag("pr-summary/Github")<
     readonly listMergedPRs: (
       repo: string,
       user: string,
-      cutoffIso: string,
+      cutoffDate: string,
     ) => F.Effect<readonly PRInfo[], GithubError>;
   }
 >() {
@@ -71,15 +71,13 @@ const deduplicatePRs = (
   return out;
 };
 
-const cutOffDate = (
+const cutoffDate = (
   lookbackHours: number,
 ): F.Effect<string> =>
   pipe(
     Clock.currentTimeMillis,
     F.map((now) =>
-      new Date(now - lookbackHours * 60 * 60 * 1000)
-        .toISOString()
-        .split("T")[0]
+      new Date(now - lookbackHours * 60 * 60 * 1000).toISOString()
     ),
   );
 
@@ -124,6 +122,8 @@ const listOpenPRs =
             owner,
             repo: repoName,
             state: "open",
+            // 100 is GitHub's hard per_page cap and covers our workload
+            // (small author set × short lookback). No paginate() needed.
             per_page: 100,
           });
 
@@ -160,7 +160,7 @@ const listMergedPRs = (octokit: Octokit) =>
 (
   repo: string,
   user: string,
-  cutoffIso: string,
+  cutoffDate: string,
 ): F.Effect<readonly PRInfo[], GithubError> =>
   F.gen(function* () {
     const [owner, repoName] = repo.split("/");
@@ -173,6 +173,8 @@ const listMergedPRs = (octokit: Octokit) =>
           state: "closed",
           sort: "updated",
           direction: "desc",
+          // 100 is GitHub's hard per_page cap and covers our workload
+          // (small author set × short lookback). No paginate() needed.
           per_page: 100,
         });
 
@@ -185,7 +187,7 @@ const listMergedPRs = (octokit: Octokit) =>
     const merged = pulls.filter(
       (pr) =>
         pr.merged_at !== null &&
-        pr.merged_at >= cutoffIso &&
+        pr.merged_at >= cutoffDate &&
         pr.user?.login.toLowerCase() === user.toLowerCase(),
     );
 
@@ -209,7 +211,7 @@ const listMergedPRs = (octokit: Octokit) =>
   });
 
 export {
-  cutOffDate,
+  cutoffDate,
   deduplicatePRs,
   Github,
   GithubError,

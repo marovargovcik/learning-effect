@@ -11,11 +11,17 @@ class ConfigParseError extends Data.TaggedError("ConfigParseError")<{
   readonly cause: unknown;
 }> {}
 
+const RepoSlug = Schema.String.pipe(
+  Schema.pattern(/^[^/\s]+\/[^/\s]+$/, {
+    message: () => "repo must be in 'owner/name' format",
+  }),
+);
+
 const ConfigSchema = Schema.Struct({
   users: Schema.Array(Schema.String),
-  repos: Schema.Array(Schema.String),
+  repos: Schema.Array(RepoSlug),
   projectContext: Schema.String,
-  lookbackHours: Schema.Number,
+  lookbackHours: Schema.Number.pipe(Schema.positive()),
 });
 
 type Config = Schema.Schema.Type<typeof ConfigSchema>;
@@ -28,7 +34,7 @@ const loadConfig = (
 
     const text = yield* pipe(
       fs.readTextFile(path),
-      F.mapError((e) => new ConfigReadError({ path, cause: e.cause })),
+      F.mapError((e) => new ConfigReadError({ path, cause: e })),
     );
 
     return yield* pipe(
@@ -37,10 +43,4 @@ const loadConfig = (
     );
   });
 
-export {
-  type Config,
-  ConfigParseError,
-  ConfigReadError,
-  ConfigSchema,
-  loadConfig,
-};
+export { type Config, ConfigParseError, ConfigReadError, loadConfig };

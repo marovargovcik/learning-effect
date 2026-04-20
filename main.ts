@@ -2,7 +2,7 @@ import { Clock, Data, Effect as F, Layer, Option as O, pipe } from "effect";
 import { basename, join } from "@std/path";
 import { type Config, loadConfig } from "./config.ts";
 import type { PRInfo, SummarizedPR } from "./model.ts";
-import { cutOffDate, deduplicatePRs, Github } from "./github.ts";
+import { cutoffDate, deduplicatePRs, Github } from "./github.ts";
 import { LLM } from "./llm.ts";
 import { FileSystem } from "./file-system.ts";
 import { buildMarkdown } from "./markdown.ts";
@@ -13,7 +13,7 @@ class MissingArgError extends Data.TaggedError("MissingArgError")<{
 
 const fetchAllPRs = (
   config: Config,
-  cutoffIso: string,
+  cutoffDate: string,
 ): F.Effect<readonly PRInfo[], never, Github> =>
   F.gen(function* () {
     const github = yield* Github;
@@ -38,7 +38,7 @@ const fetchAllPRs = (
           );
 
           const merged = yield* pipe(
-            github.listMergedPRs(repo, user, cutoffIso),
+            github.listMergedPRs(repo, user, cutoffDate),
             F.catchAll((e) =>
               pipe(
                 F.logWarning("listMergedPRs failed — skipping", e),
@@ -62,12 +62,17 @@ const summarizePRs = (
   F.gen(function* () {
     const llm = yield* LLM;
 
-    const results = yield* F.forEach(prs, (pr) =>
-      F.gen(function* () {
-        yield* F.logInfo(`summarizing`, { title: pr.title });
-
-        const result = yield* pipe(
-          llm.summarize(pr, projectContext),
+    const results = yield* F.forEach(
+      prs,
+      (pr) =>
+        pipe(
+          F.logInfo(`summarizing`, { title: pr.title }),
+          F.zipRight(llm.summarize(pr, projectContext)),
+          F.tap((result) =>
+            O.isNone(result)
+              ? F.logInfo(`skipped (not relevant)`, { title: pr.title })
+              : F.void
+          ),
           F.catchAll((e) =>
             pipe(
               F.logWarning("LLM call failed — skipping PR", e, {
@@ -76,14 +81,9 @@ const summarizePRs = (
               F.as(O.none<SummarizedPR>()),
             )
           ),
-        );
-
-        if (O.isNone(result)) {
-          yield* F.logInfo(`skipped (not relevant)`, { title: pr.title });
-        }
-
-        return result;
-      }));
+        ),
+      { concurrency: 3 },
+    );
 
     return results.flatMap(O.toArray);
   });
@@ -98,7 +98,8 @@ const writeOutput = (
     const now = new Date(yield* Clock.currentTimeMillis);
     const md = buildMarkdown(summarized, configName, lookbackHours, now);
 
-    const outputDir = join(Deno.cwd(), "artifacts");
+    const cwd = yield* fs.cwd;
+    const outputDir = join(cwd, "artifacts");
     yield* fs.ensureDir(outputDir);
 
     const outputPath = join(outputDir, `${configName}.md`);
@@ -121,7 +122,7 @@ const program = (configPath: string) =>
       lookbackHours: config.lookbackHours,
     });
 
-    const cutoff = yield* cutOffDate(config.lookbackHours);
+    const cutoff = yield* cutoffDate(config.lookbackHours);
 
     const prs = yield* fetchAllPRs(config, cutoff);
     yield* F.logInfo(`found ${prs.length} unique PRs`);
@@ -143,13 +144,13 @@ if (import.meta.main) {
     F.flatMap(program),
   );
 
-  const MainLive = Layer.mergeAll(
+  const AppLive = Layer.mergeAll(
     FileSystem.live,
     Github.live,
     LLM.live,
   );
 
-  F.runPromise(pipe(bootstrap, F.provide(MainLive))).catch((err) => {
+  F.runPromise(pipe(bootstrap, F.provide(AppLive))).catch((err) => {
     console.error("Fatal:", err);
     Deno.exit(1);
   });

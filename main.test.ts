@@ -7,7 +7,7 @@ import {
   TestClock,
   TestContext,
 } from "effect";
-import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { Github } from "./github.ts";
 import { LLM, LLMError } from "./llm.ts";
 import type { PRInfo, SummarizedPR } from "./model.ts";
@@ -18,7 +18,7 @@ const mergedPR: PRInfo = {
   title: "Wire subsidy hook",
   url: "https://github.com/famly/app/pull/2",
   repo: "famly/app",
-  author: "hubot",
+  author: "octocat",
   body: O.none(),
   diff: "diff --git a/... \n+hook",
   status: "merged",
@@ -37,10 +37,11 @@ const FakeGithub = (opts: FakeGithubOpts) =>
       F.succeed(opts.merged?.[`${repo}|${user}`] ?? []),
   });
 
-const FakeLLM = (
-  isRelevant: (pr: PRInfo) => boolean,
-  makeSummary: (pr: PRInfo) => string = (pr) => `summary of ${pr.title}`,
-) =>
+type FakeLLMOpts = {
+  readonly isRelevant: (pr: PRInfo) => boolean;
+};
+
+const FakeLLM = ({ isRelevant }: FakeLLMOpts) =>
   Layer.succeed(LLM, {
     summarize: (pr, _projectContext) =>
       F.succeed(
@@ -50,7 +51,7 @@ const FakeLLM = (
             url: pr.url,
             repo: pr.repo,
             author: pr.author,
-            summary: makeSummary(pr),
+            summary: `summary of ${pr.title}`,
             status: pr.status,
           })
           : O.none(),
@@ -72,30 +73,30 @@ Deno.test("program: fetches, filters, summarizes, writes markdown", async () => 
     url: "https://x/u",
   };
 
-  const { fs, ref: fsRef } = await setupInMemoryFileSystem({
+  const { InMemoryFileSystem, ref: fsRef } = await setupInMemoryFileSystem({
     "/config.json": configJson,
   });
 
   const AppTest = Layer.mergeAll(
-    fs,
+    InMemoryFileSystem,
     FakeGithub({
       open: { "famly/app|octocat": [openPR, openIrrelevant] },
       merged: { "famly/app|octocat": [mergedPR] },
     }),
-    FakeLLM(
-      (pr) =>
+    FakeLLM({
+      isRelevant: (pr) =>
         pr.title.toLowerCase().includes("billing") || pr.status === "merged",
-    ),
+    }),
   );
 
   await runTest(
     pipe(
-      program("/config.json"),
+      F.gen(function* () {
+        yield* TestClock.setTime(new Date("2026-04-18T10:00:00Z").getTime());
+        return yield* program("/config.json");
+      }),
       F.provide(AppTest),
       F.provide(TestContext.TestContext),
-      F.tap(() =>
-        TestClock.setTime(new Date("2026-04-18T10:00:00Z").getTime())
-      ),
     ),
   );
 
@@ -108,7 +109,7 @@ Deno.test("program: fetches, filters, summarizes, writes markdown", async () => 
 
   const [, md] = outputs[0];
 
-  assertMatch(md, /# PR Summary — config/);
+  assertStringIncludes(md, "# PR Summary — config (2026-04-18)");
   assertStringIncludes(md, "[relevant billing PR]");
   assertStringIncludes(md, "[Wire subsidy hook]");
 
@@ -127,12 +128,12 @@ Deno.test("program: tolerates per-PR LLM failures", async () => {
     lookbackHours: 48,
   });
 
-  const { fs, ref: fsRef } = await setupInMemoryFileSystem({
+  const { InMemoryFileSystem, ref: fsRef } = await setupInMemoryFileSystem({
     "/c.json": configJson,
   });
 
   const FlakyLLM = Layer.succeed(LLM, {
-    summarize: (pr, _ctx) =>
+    summarize: (pr, _projectContext) =>
       pr.title === "bad one"
         ? F.fail(new LLMError({ prTitle: pr.title, cause: "boom" }))
         : F.succeed(O.some<SummarizedPR>({
@@ -146,7 +147,7 @@ Deno.test("program: tolerates per-PR LLM failures", async () => {
   });
 
   const AppTest = Layer.mergeAll(
-    fs,
+    InMemoryFileSystem,
     FakeGithub({
       open: {
         "famly/app|octocat": [

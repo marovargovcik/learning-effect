@@ -1,5 +1,5 @@
 import { Effect as F, Layer, Option as O, pipe, Ref } from "effect";
-import { FileSystem, FileWriteError } from "./file-system.ts";
+import { FileSystem, FileSystemError } from "./file-system.ts";
 import type { PRInfo } from "./model.ts";
 
 const runTest = <A, E>(eff: F.Effect<A, E, never>): Promise<A> =>
@@ -29,13 +29,14 @@ const makeInMemoryFileSystem = (initial: Record<string, string> = {}) =>
             const content = state.get(path);
 
             return content === undefined
-              ? F.fail(new FileWriteError({ path, cause: "not found" }))
+              ? F.fail(new FileSystemError({ path, cause: "not found" }))
               : F.succeed(content);
           }),
         ),
       writeTextFile: (path, contents) =>
         Ref.update(ref, (state) => new Map(state).set(path, contents)),
       ensureDir: (_path) => F.void,
+      cwd: F.succeed("/"),
     };
     return { fs, ref };
   });
@@ -50,13 +51,7 @@ const setupInMemoryFileSystem = async (
   initial: Record<string, string> = {},
 ) => {
   const { fs, ref } = await F.runPromise(makeInMemoryFileSystem(initial));
-  return { fs: Layer.succeed(FileSystem, fs), ref };
+  return { InMemoryFileSystem: Layer.succeed(FileSystem, fs), ref };
 };
 
-export {
-  examplePR,
-  InMemoryFileSystem,
-  makeInMemoryFileSystem,
-  runTest,
-  setupInMemoryFileSystem,
-};
+export { examplePR, InMemoryFileSystem, runTest, setupInMemoryFileSystem };

@@ -1,6 +1,6 @@
 import { Effect as F, pipe, TestClock, TestContext } from "effect";
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { __test_truncateDiff, cutOffDate, deduplicatePRs } from "./github.ts";
+import { __test_truncateDiff, cutoffDate, deduplicatePRs } from "./github.ts";
 import { examplePR, runTest } from "./test-helpers.ts";
 
 Deno.test("deduplicatePRs keeps first occurrence, preserves order", () => {
@@ -27,13 +27,13 @@ Deno.test("truncateDiff cuts + annotates when over the line limit", () => {
   assertEquals(kept.length, 1500);
 });
 
-Deno.test("cutOffDate uses current time minus lookback", async () => {
+Deno.test("cutoffDate uses current time minus lookback", async () => {
   await runTest(
     pipe(
       F.gen(function* () {
         yield* TestClock.setTime(new Date("2026-04-18T10:00:00Z").getTime());
-        const cutoff = yield* cutOffDate(48);
-        assertEquals(cutoff, "2026-04-16");
+        const cutoff = yield* cutoffDate(48);
+        assertEquals(cutoff, "2026-04-16T10:00:00.000Z");
       }),
       F.provide(TestContext.TestContext),
     ),
